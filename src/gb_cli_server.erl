@@ -28,6 +28,7 @@
 %% API functions
 -export([exit/0,
 	 usage/2,
+	 usage_expand/2,
 	 describe/2]).
 
 -export([start_link/1]).
@@ -453,8 +454,40 @@ cursor_move(Int) ->
     io_lib:format("\33[~BD", [Int]).
 
 expand(CM, ChannelId, Bytes, Routines) ->
+    case option_expand(Bytes) of
+	{true, Tokens} ->
+	    expand_options(CM, ChannelId, Bytes, Routines, Tokens);
+	false ->
+	    expand_command(CM, ChannelId, Bytes, Routines)
+    end.
+
+expand_options(CM, ChannelId, Bytes, Routines, Tokens) ->
+    [Base|_] = Tokens,
+    case get_attr(Base, expand, Routines) of
+	{M, F, A} ->
+	    NewArgs = check_arity(A, Tokens, Routines),
+	    ?debug("apply(~p,~p,~p)",[M,F,NewArgs]),
+	    try apply(M, F, NewArgs) of
+		{ok, []} ->
+		    Bytes;
+		{ok, [Result]} ->
+		    lists:reverse(add_space(lists:droplast(Tokens)++[Result]));
+		{ok, ResultList} ->
+		    Exp = add_space(ResultList) ++ "\n",
+		    ssh_connection:send(CM, ChannelId, "\n\33[2K\r" ++ Exp),
+		    Bytes
+	    catch
+		error:Error ->
+		    ?warning("CLI option expand error: ~p", [Error]),
+		    Bytes
+	    end;
+	undefined ->
+	    Bytes
+    end.
+
+expand_command(CM, ChannelId, Bytes, Routines) ->
     Prefix = lists:reverse(Bytes),
-    ?debug("Expand Prefix: ~p", [Prefix]),
+    ?debug("Expand Command Prefix: ~p", [Prefix]),
     Fun =
 	fun(Cmd, _, {C, Acc}) ->
 	    case lists:prefix(Prefix, Cmd) of
@@ -473,6 +506,27 @@ expand(CM, ChannelId, Bytes, Routines) ->
 	    ssh_connection:send(CM, ChannelId, "\n\33[2K\r" ++ Expansion),
 	    Bytes
     end.
+
+option_expand(L) when length(L) =< 1->
+    false;
+option_expand([32|_] = Bytes) ->
+    Prefix = lists:reverse(Bytes),
+    Base = string:tokens(Prefix, " "),
+    {true, Base++[""]};
+option_expand(Bytes) ->
+    Prefix = lists:reverse(Bytes),
+    case string:tokens(Prefix, " ") of
+	[_,_|_] = A -> {true, A};
+	[_] -> false
+    end.
+
+add_space(L) ->
+    add_space(L, []).
+
+add_space([E|Rest], Acc) ->
+    add_space(Rest, Acc ++ E ++ " ");
+add_space([], Acc) ->
+    Acc.
 
 strip_trailing_spaces([32|Rest]) ->
     strip_trailing_spaces(Rest);
@@ -593,6 +647,8 @@ rewind(H, L, [L|FRest]) ->
 rewind(H, L, [E|FRest]) ->
     rewind([E|H], L, FRest).
 
+parse_ip_address("any") ->
+    any;
 parse_ip_address(IP) when is_list(IP) ->
     case inet:parse_address(IP) of
 	{ok, InetIP} ->
@@ -606,6 +662,7 @@ add_base_routines(Routines) ->
 			 usage => "exit",
 			 desc => "Exit CLI session."},
 	     "usage" => #{mfa => {?MODULE, usage, 2},
+			  expand => {?MODULE, usage_expand, 2},
 			  usage => "usage CMD",
 			  desc => "Show usage of a given command."},
 	     "describe" => #{mfa => {?MODULE, describe, 2},
@@ -615,6 +672,9 @@ add_base_routines(Routines) ->
 
 %%%===================================================================
 %%% Base routine functions
+%%% routine_callback() -> {ok, string()} | {stop, string()}.
+%%% routine_callback(Args :: [string()]) ->
+%%%    {ok, string()} | {stop, string()}.
 %%%===================================================================
 exit() ->
     {stop, "Exit signal received"}.
@@ -627,6 +687,21 @@ describe([Cmd|_], Routines) ->
     ?debug("Cmd: ~p, Routines: ~p", [Cmd, Routines]),
     Desc = get_attr(Cmd, desc, Routines),
     {ok, Desc}.
+
+%%%===================================================================
+%%% Expand Callbacks
+%%% expand_callback(Args :: [string()]) -> {ok, [string()]}.
+%%%===================================================================
+usage_expand(["usage", Prefix], Routines) ->
+    Fun =
+	fun(Cmd, _, Acc) ->
+	    case lists:prefix(Prefix, Cmd) of
+		true -> [Cmd | Acc];
+		_ -> Acc
+	    end
+	end,
+    Cmds = maps:fold(Fun, [], Routines),
+    {ok, Cmds}.
 
 -spec get_attr(Name :: string(), Attr :: atom(), Routines :: map()) ->
     T :: term() | undefined.
