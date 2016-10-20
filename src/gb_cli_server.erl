@@ -28,8 +28,7 @@
 %% API functions
 -export([exit/0,
 	 usage/2,
-	 usage_expand/2,
-	 describe/2]).
+	 usage_expand/2]).
 
 -export([start_link/1]).
 
@@ -647,6 +646,8 @@ rewind(H, L, [L|FRest]) ->
 rewind(H, L, [E|FRest]) ->
     rewind([E|H], L, FRest).
 
+parse_ip_address(any) ->
+    any;
 parse_ip_address("any") ->
     any;
 parse_ip_address(IP) when is_list(IP) ->
@@ -665,9 +666,10 @@ add_base_routines(Routines) ->
 			  expand => {?MODULE, usage_expand, 2},
 			  usage => "usage CMD",
 			  desc => "Show usage of a given command."},
-	     "describe" => #{mfa => {?MODULE, describe, 2},
-			     usage => "describe CMD",
-			     desc => "Print description of a command."}},
+	     "help" => #{mfa => {?MODULE, usage, 2},
+			 expand => {?MODULE, usage_expand, 2},
+			 usage => "help CMD",
+			 desc => "Show usage of a given command.."}},
     maps:merge(Base, Routines).
 
 %%%===================================================================
@@ -680,19 +682,21 @@ exit() ->
     {stop, "Exit signal received"}.
 
 usage([Cmd|_], Routines) ->
+    Desc =
+	case get_attr(Cmd, desc, Routines) of
+	    undefined -> "Usage: ";
+	    Str ->
+		Str ++ "\n\rUsage: "
+	end,
     Usage = get_attr(Cmd, usage, Routines),
-    {ok, Usage}.
-
-describe([Cmd|_], Routines) ->
-    ?debug("Cmd: ~p, Routines: ~p", [Cmd, Routines]),
-    Desc = get_attr(Cmd, desc, Routines),
-    {ok, Desc}.
+    {ok, Desc ++ Usage}.
 
 %%%===================================================================
 %%% Expand Callbacks
 %%% expand_callback(Args :: [string()]) -> {ok, [string()]}.
 %%%===================================================================
-usage_expand(["usage", Prefix], Routines) ->
+usage_expand([U, Prefix], Routines) when U == "usage";
+					 U == "help" ->
     Fun =
 	fun(Cmd, _, Acc) ->
 	    case lists:prefix(Prefix, Cmd) of
