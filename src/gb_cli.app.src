@@ -1,5 +1,8 @@
 {application, gb_cli,
  [{description, "Growbeard CLI library application"},
   {vsn, "0.1"},
-  {modules, []}
+  {registered, []},
+  {applications, []},
+  {modules, []},
+  {env, []}
  ]}.

@@ -39,7 +39,7 @@
 	 terminate/2,
          code_change/3]).
 
--include("gb_log.hrl").
+-include_lib("gb_log/include/gb_log.hrl").
 
 -record(state, {id,
 		cm,
@@ -341,17 +341,15 @@ handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, <<"\r">>}},
 	    {stop,  ChannelId, State}
     end;
 handle_ssh_msg({ssh_cm, CM,
-	       {data, ChannelId, 0, <<Char:8, _/binary>> = Bin}},
+	       {data, ChannelId, 0, <<Char:8, _/binary>>}},
 	       State = #state{bytes = Bytes, cursor = C, ris = undefined}) ->
-    ?debug("ssh_cm..data ~p", [Bin]),
     Acc = insert_char(Char, C, Bytes),
     prompt(CM, ChannelId, Acc, C),
     {ok, State#state{bytes = Acc}};
 handle_ssh_msg({ssh_cm, CM,
-	       {data, ChannelId, 0, <<Char:8, _/binary>> = Bin}},
+	       {data, ChannelId, 0, <<Char:8, _/binary>>}},
 	       State = #state{history = H, future = F,
 			      bytes = B, ris = Ris}) ->
-    ?debug("ssh_cm..data ~p", [Bin]),
     NewRis = insert_char(Char, 0, Ris),
     {S,NH,NB,NF,NC} = reverse_search(NewRis, H, B, F),
     prompt(CM, ChannelId, NB, NC, {S,NewRis}),
