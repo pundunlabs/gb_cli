@@ -144,16 +144,7 @@ handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, <<3>>}},
     %%Ctrl+C
     ssh_connection:send(CM, ChannelId, <<"^C\n\r">>),
     prompt(CM, ChannelId, [], 0),
-    NH =
-	case F of
-	    [] ->
-		H;
-	    [_] ->
-		[B|H];
-	    _ ->
-		[_|FR] = lists:reverse(F),
-		FR ++ [B|H]
-	end,		    
+    NH = reorder_history(H, B, F),
     {ok, State#state{history = NH, future = [], bytes = [], cursor = 0}};
 handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, <<1>>}},
 	       #state{bytes = Bytes} = State) ->
@@ -197,6 +188,13 @@ handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, <<18>>}},
     prompt(CM, ChannelId, NB, NC, {S, Ris}),
     {ok, State#state{history = NH, future = NF,
 		     bytes = NB, cursor = NC}};
+handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, <<22>>}},
+	       #state{history = H, future = F, bytes = B} = State) ->
+    %%Ctrl+V
+    ssh_connection:send(CM, ChannelId, <<"^V\n\r">>),
+    prompt(CM, ChannelId, [], 0),
+    NH = reorder_history(H, B, F),
+    {ok, State#state{history = NH, future = [], bytes = [], cursor = 0}};
 handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, <<27:8,91:8,65:8>>}},
 	       #state{history = H, future = F,
 		      bytes = B, cursor = C} = State) ->
@@ -293,7 +291,7 @@ handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, <<127>>}},
 	end,
     {S,NH,NB,NF,NC} = reverse_search(NewRis, H, B, F),
     prompt(CM, ChannelId, NB, NC, {S,NewRis}),
-    ?debug("NewRis: ~p, NewLastRis: ~p",[NewRis, NewLastRis]),
+    %%?debug("NewRis: ~p, NewLastRis: ~p",[NewRis, NewLastRis]),
     {ok, State#state{history = NH, future = NF, bytes = NB,
 		     ris = NewRis, last_ris = NewLastRis,
 		     cursor = NC}};
@@ -341,16 +339,31 @@ handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, <<"\r">>}},
 	    {stop,  ChannelId, State}
     end;
 handle_ssh_msg({ssh_cm, CM,
-	       {data, ChannelId, 0, <<Char:8, _/binary>>}},
+	       {data, ChannelId, 0, <<Char:8>>}},
 	       State = #state{bytes = Bytes, cursor = C, ris = undefined}) ->
     Acc = insert_char(Char, C, Bytes),
     prompt(CM, ChannelId, Acc, C),
     {ok, State#state{bytes = Acc}};
 handle_ssh_msg({ssh_cm, CM,
-	       {data, ChannelId, 0, <<Char:8, _/binary>>}},
+	       {data, ChannelId, 0, <<Chars/binary>>}},
+	       State = #state{bytes = Bytes, cursor = C, ris = undefined}) ->
+    Acc = insert_string(Chars, C, Bytes),
+    prompt(CM, ChannelId, Acc, C),
+    {ok, State#state{bytes = Acc}};
+handle_ssh_msg({ssh_cm, CM,
+	       {data, ChannelId, 0, <<Char:8>>}},
 	       State = #state{history = H, future = F,
 			      bytes = B, ris = Ris}) ->
     NewRis = insert_char(Char, 0, Ris),
+    {S,NH,NB,NF,NC} = reverse_search(NewRis, H, B, F),
+    prompt(CM, ChannelId, NB, NC, {S,NewRis}),
+    {ok, State#state{history = NH, future = NF, bytes = NB,
+		     cursor = NC, ris = NewRis, last_ris = NewRis}};
+handle_ssh_msg({ssh_cm, CM,
+	       {data, ChannelId, 0, <<Chars/binary>>}},
+	       State = #state{history = H, future = F,
+			      bytes = B, ris = Ris}) ->
+    NewRis = insert_string(Chars, 0, Ris),
     {S,NH,NB,NF,NC} = reverse_search(NewRis, H, B, F),
     prompt(CM, ChannelId, NB, NC, {S,NewRis}),
     {ok, State#state{history = NH, future = NF, bytes = NB,
@@ -442,7 +455,6 @@ prompt(CM, ChannelId, Bytes, Cursor, RisTuple)->
 		"(reverse-i-search)`"++lists:reverse(Ris)++"': "
 	end,
     Out = lists:flatten("\33[2K\r"++P++Str++Move),
-    %?debug("prompt: ~p", [Out]),
     ssh_connection:send(CM, ChannelId, Out).
 
 cursor_move(0) ->
@@ -472,7 +484,8 @@ expand_options(CM, ChannelId, Bytes, Routines, Tokens) ->
 		{ok, ResultList} ->
 		    Exp = add_space(ResultList) ++ "\n",
 		    ssh_connection:send(CM, ChannelId, "\n\33[2K\r" ++ Exp),
-		    Bytes
+		    Result = common_chars(ResultList),
+		    Result ++ lists:reverse(add_space(lists:droplast(Tokens)))
 	    catch
 		error:Error ->
 		    ?warning("CLI option expand error: ~p", [Error]),
@@ -486,22 +499,22 @@ expand_command(CM, ChannelId, Bytes, Routines) ->
     Prefix = lists:reverse(Bytes),
     ?debug("Expand Command Prefix: ~p", [Prefix]),
     Fun =
-	fun(Cmd, _, {C, Acc}) ->
+	fun(Cmd, _, Acc) ->
 	    case lists:prefix(Prefix, Cmd) of
-		true -> {C+1, Acc ++ Cmd ++ " "};
-		_ -> {C, Acc}
+		true -> [Cmd | Acc];
+		_ -> Acc
 	    end
 	end,
-    {Count, Cmds} = maps:fold(Fun, {0, []}, Routines),
-    case Count of
-	0 -> 
+    Cmds = maps:fold(Fun, [], Routines),
+    case Cmds of
+	[] ->
 	    Bytes;
-	1 -> 
-	    lists:reverse(Cmds);
+	[Cmd] ->
+	    lists:reverse(Cmd);
 	_ ->
-	    Expansion =  Cmds ++ "\n",
+	    Expansion =  add_space(Cmds) ++ "\n",
 	    ssh_connection:send(CM, ChannelId, "\n\33[2K\r" ++ Expansion),
-	    Bytes
+	    common_chars(Cmds)
     end.
 
 option_expand(L) when length(L) =< 1->
@@ -603,13 +616,24 @@ insert_char(Char, 0, S, Bytes)->
 insert_char(Char, C, S, [B|Rest])->
     insert_char(Char, C-1, [B|S], Rest).
 
+insert_string(Chars, C, Bytes)->
+    Str = binary_to_list(Chars),
+    insert_string(lists:reverse(Str), C, [], Bytes).
+
+insert_string(Chars, 0, S, Bytes)->
+    lists:reverse(S)++Chars++Bytes;
+insert_string(Chars, C, S, [B|Rest])->
+    insert_string(Chars, C-1, [B|S], Rest).
+
 delete_char(_C, []) ->
     [];
 delete_char(C, Bytes) ->
     delete_char(C, [], Bytes).
 
 delete_char(0, S, [_|Rest]) ->
-     lists:reverse(S)++Rest;
+    lists:reverse(S)++Rest;
+delete_char(0, S, []) ->
+    lists:reverse(S);
 delete_char(C, S, [B|Rest]) ->
     delete_char(C-1, [B|S], Rest).
 		
@@ -723,3 +747,31 @@ printable(L, true) ->
 printable(E, false) ->
     ?debug("Not printable result: ~p", [E]),
     io_lib:format("~p", [E]).
+
+reorder_history(H,B,F)->
+    case F of
+	[] ->
+	    H;
+	[_] ->
+	    [B|H];
+	_ ->
+	    [_|FR] = lists:reverse(F),
+	    FR ++ [B|H]
+    end.
+
+common_chars(List) ->
+    common_chars(List, [], []).
+
+common_chars([[C | Alt] | Rest], [], Acc) ->
+    common_chars(Rest, [Alt], C, Acc);
+common_chars([[] | _], [], Acc) ->
+    Acc;
+common_chars([], [], Acc) ->
+    Acc.
+
+common_chars([[C | Alt] | Rest], CollectBack, C, Acc) ->
+    common_chars(Rest, [Alt | CollectBack], C, Acc);
+common_chars([], CollectBack, C, Acc) ->
+    common_chars(CollectBack, [], [C | Acc]);
+common_chars(_, _, _, Acc) ->
+    Acc.
