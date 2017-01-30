@@ -2,7 +2,7 @@
  [{description, "Growbeard CLI library application"},
   {vsn, "0.1"},
   {registered, []},
-  {applications, []},
+  {applications, [stdlib, kernel]},
   {modules, []},
   {env, []}
  ]}.
