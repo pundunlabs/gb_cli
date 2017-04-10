@@ -488,7 +488,7 @@ expand_options(CM, ChannelId, Bytes, Routines, Tokens) ->
 		    Result ++ lists:reverse(add_space(lists:droplast(Tokens)))
 	    catch
 		error:Error ->
-		    ?warning("CLI option expand error: ~p", [Error]),
+		    ?warning("CLI option expand error: ~p ~p", [Error, erlang:get_stacktrace()]),
 		    Bytes
 	    end;
 	undefined ->
@@ -578,7 +578,7 @@ apply_cmd(M, F, Args) ->
 	    {stop, printable(Msg) ++ "\n"}
     catch
 	error:Error ->
-	    ?warning("CLI command error: ~p", [Error]),
+	    ?warning("CLI command error: ~p ~p", [Error, erlang:get_stacktrace()]),
 	    {ok, printable(Error) ++ "\n"}
     end.
 
