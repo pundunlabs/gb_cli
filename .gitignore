@@ -30,3 +30,5 @@ erl_crash.dump
 
 # ignore rebar.lock file
 rebar.lock
+.rebar3
+ebin/
