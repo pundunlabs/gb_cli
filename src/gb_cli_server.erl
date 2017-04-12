@@ -480,7 +480,7 @@ expand_options(CM, ChannelId, Bytes, Routines, Tokens) ->
 		{ok, []} ->
 		    Bytes;
 		{ok, [Result]} ->
-		    [32 | lists:reverse(add_space(lists:droplast(Tokens)++[Result]))];
+		    lists:reverse(add_space(lists:droplast(Tokens)++[Result]));
 		{ok, ResultList} ->
 		    Exp = add_space(ResultList) ++ "\n",
 		    ssh_connection:send(CM, ChannelId, "\n\33[2K\r" ++ Exp),
