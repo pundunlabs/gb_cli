@@ -99,14 +99,17 @@
     {ok, ChannelRef :: pid()} | {error, Reason :: term()}.
 start_link(Mod) ->
     Routines = add_base_routines(Mod:routines()),
+    SysDir = Mod:system_dir(),
     CbInitArgs = [{welcome, Mod:welcome_msg()},
 		  {routines, Routines}],
-    Options = [{system_dir, Mod:system_dir()},
+    Options = [{system_dir, SysDir},
 	       {user_dir, Mod:user_dir()},
 	       {ssh_cli, {?MODULE, CbInitArgs}}],
+    ModOpts = get_opts(Mod),
     IP = parse_ip_address(Mod:ip()),
     Port = Mod:port(),
-    ssh:daemon(IP, Port, Options).
+    check_ssh_host_key(SysDir),
+    ssh:daemon(IP, Port, Options++ModOpts).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -775,3 +778,24 @@ common_chars([], CollectBack, C, Acc) ->
     common_chars(CollectBack, [], [C | Acc]);
 common_chars(_, _, _, Acc) ->
     Acc.
+
+get_opts(Mod) ->
+    case catch Mod:get_opts() of
+	L when is_list(L) ->
+	    L;
+	_ ->
+	    []
+    end.
+
+check_ssh_host_key(Dir) ->
+    File = filename:join(Dir, "ssh_host_rsa_key"),
+    case file:read_file_info(File) of
+	{error, enoent} ->
+	    generate_host_key(File);
+	_ ->
+	    ok
+    end.
+generate_host_key(File) ->
+    ?info("generating ssh server key ~p", [File]),
+    Res = os:cmd("ssh-keygen -P \"\" -q -t rsa -f " ++ File),
+    ?info("ssh-keygen returned ~p", [Res]).
