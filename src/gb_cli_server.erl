@@ -791,7 +791,7 @@ check_ssh_host_key(Dir) ->
     File = filename:join(Dir, "ssh_host_rsa_key"),
     case file:read_file_info(File) of
 	{error, enoent} ->
-	    generate_host_key(File);
+	    spawn(fun() -> generate_host_key(File) end);
 	_ ->
 	    ok
     end.
