@@ -789,6 +789,7 @@ get_opts(Mod) ->
 
 check_ssh_host_key(Dir) ->
     File = filename:join(Dir, "ssh_host_rsa_key"),
+    ?info("checking for ~p", [File]),
     case file:read_file_info(File) of
 	{error, enoent} ->
 	    spawn(fun() -> generate_host_key(File) end);
@@ -797,5 +798,5 @@ check_ssh_host_key(Dir) ->
     end.
 generate_host_key(File) ->
     ?info("generating ssh server key ~p", [File]),
-    Res = os:cmd("ssh-keygen -P \"\" -q -t rsa -f " ++ File),
+    Res = os:cmd("ssh-keygen -P \"\" -m pem -q -t rsa -f " ++ File),
     ?info("ssh-keygen returned ~p", [Res]).
